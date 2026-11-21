@@ -1,26 +1,44 @@
-import os, json, re, shutil, gradio as gr
+import csv
+import json
+import os
+import re
+import shutil
+
+import gradio as gr
 
 
 
 
 # Keywords Section
 
-keyword_file = "keywords.json"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+keyword_file = os.path.join(BASE_DIR, "keywords.json")
 default_bad_words = ["hurt", "pathetic", "terrible", "miserable", "upset",
                  "attacking", "insulting", "personal", "look down on"]
 
 def save_keywords(keyword):
-    with open(keyword_file, "w") as f:
+    with open(keyword_file, "w", encoding="utf-8") as f:
         json.dump(keyword, f, indent=2)
 
 def load_keywords():
     if not os.path.exists(keyword_file):
         return {}
     try:
-        with open(keyword_file) as f:
+        with open(keyword_file, encoding="utf-8") as f:
             data = json.load(f)
-        return {str(k).strip().lower(): max(1, int(v)) for k, v in data.items() if str(k).strip()}
-    except (json.JSONDecodeError, ValueError, AttributeError):
+        if not isinstance(data, dict):
+            return {}
+        keywords = {}
+        for word, score in data.items():
+            clean_word = str(word).strip().lower()
+            if not clean_word:
+                continue
+            try:
+                keywords[clean_word] = max(1, int(score))
+            except (TypeError, ValueError):
+                keywords[clean_word] = 1
+        return keywords
+    except (json.JSONDecodeError, OSError, AttributeError):
         return {}
 
 def add_keyword(word, score=1):
@@ -60,20 +78,42 @@ ensure_defaults()
 
 
 
+
+
+
 # Chat Log Uploading
-folder = "uploaded_logs"
+folder = os.path.join(BASE_DIR, "uploaded_logs")
 os.makedirs(folder, exist_ok = True)
 
 def saved_logs():
-  return sorted(f for f in os.listdir(folder) if f.lower().endswith(('.txt', '.json', '.csv')))
+  try:
+    return sorted(
+      f for f in os.listdir(folder)
+      if f.lower().endswith(('.txt', '.json', '.csv'))
+      and os.path.isfile(os.path.join(folder, f))
+    )
+  except OSError:
+    return []
 
 def save_upload(upload):
   if not upload:
     gr.Info("Choose a file to upload first")
-    return gr.Dropdown(choices=saved_logs()), gr.Dropdown(choices=saved_logs())
+    files = saved_logs()
+    return gr.Dropdown(choices=files), gr.Dropdown(choices=files), gr.Dropdown(choices=files)
   name = os.path.basename(upload)
-  shutil.copy2(upload, os.path.join(folder, name))
-  return gr.Dropdown(choices=saved_logs(), value=name), gr.Dropdown(choices=saved_logs())
+  destination = os.path.join(folder, name)
+  try:
+    if os.path.abspath(upload) != os.path.abspath(destination):
+      shutil.copy2(upload, destination)
+    gr.Info(f"Uploaded '{name}'.")
+  except (OSError, shutil.Error) as exc:
+    gr.Info(f"Could not upload '{name}': {exc}")
+  files = saved_logs()
+  return (
+    gr.Dropdown(choices=files, value=name if name in files else None),
+    gr.Dropdown(choices=files),
+    gr.Dropdown(choices=files, value=name if name in files else None),
+  )
 
 def remove_file(name, current):
   name = os.path.basename(name or "")
@@ -81,27 +121,111 @@ def remove_file(name, current):
   if not name or not os.path.isfile(path):
     gr.Info("Choose a file to remove first.")
   else:
+    try:
       os.remove(path)
       gr.Info(f"Removed '{name}'.")
+    except OSError as exc:
+      gr.Info(f"Could not remove '{name}': {exc}")
   files = saved_logs()
   keep = current if current in files else None
-  return gr.Dropdown(choices=files, value=keep), gr.Dropdown(choices=files, value=None)
+  return (
+    gr.Dropdown(choices=files, value=keep),
+    gr.Dropdown(choices=files, value=None),
+    gr.Dropdown(choices=files),
+  )
+
+
 
 
 # Scanning file
+def finding_keywords(saved_log):
+  if not saved_log:
+    gr.Info("Choose a chat log to scan first.")
+    return "No chat log selected."
 
-def finding_keywords():
-  with open(keyword_file, "r") as f:
-    keywords = json.load(f)
-  return re.findall('|'.join(keywords.keys()), 'You are bad person')
+  name = os.path.basename(saved_log)
+  path = os.path.join(folder, name)
+  if not os.path.isfile(path):
+    gr.Info(f"'{name}' is no longer available.")
+    return f"Chat log '{name}' could not be found."
 
-print(finding_keywords)
+  try:
+
+    if name.lower().endswith(".json"):
+      with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+      if isinstance(data, list):
+        texts = [
+          str(row.get("Message", ""))
+          for row in data
+          if isinstance(row, dict)
+        ]
+      elif isinstance(data, dict):
+        texts = [
+          str(value)
+          for key, value in data.items()
+          if key.lower() in ("message", "messages", "text", "content")
+        ]
+        if not texts:
+          texts = [str(data)]
+      else:
+        texts = [str(data)]
+      text = "\n".join(texts)
 
 
-try:
-    demo.close() # type: ignore
-except NameError:
-    pass
+    elif name.lower().endswith(".csv"):
+      texts = []
+      with open(path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+          message = row.get("Message")
+          texts.append(str(message) if message is not None else "")
+      text = "\n".join(texts)
+
+      
+    else:
+      with open(path, "r", encoding="utf-8") as f:
+        text = f.read()
+  except (OSError, json.JSONDecodeError, UnicodeDecodeError, csv.Error) as exc:
+    gr.Info(f"Could not scan '{name}': {exc}")
+    return f"Could not scan '{name}'."
+
+  keywords = load_keywords()
+  if not keywords:
+    gr.Info("The keyword list is empty.")
+    return "No keywords configured."
+
+  matches = []
+  for keyword, score in sorted(keywords.items()):
+    pattern = re.compile(re.escape(keyword), re.IGNORECASE)
+    count = len(pattern.findall(text))
+    if count:
+      matches.append(f"{keyword}: {count} occurrence{'s' if count != 1 else ''}, score {score}")
+
+  if not matches:
+    return f"No keywords found in '{name}'."
+  return f"Results for '{name}':\n" + "\n".join(matches)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Gradio Setup
+
+
+ #try:
+    #demo.close() # type: ignore
+#except NameError:
+    #pass
 
 
 # Keyword UI Functions
@@ -121,33 +245,42 @@ with gr.Blocks(title="Chat Sentinel") as demo:
 
 # File Uplaoding UI
     with gr.Row():
-      with gr.Column():
-        upload_box = gr.File(label="Upload a chat log (.txt, .json, .csv)", type="filepath", file_types=[".txt", ".json", ".csv"], height = 150)
+        with gr.Column():
+            upload_box = gr.File(label="Upload a chat log (.txt, .json, .csv)", type="filepath", file_types=[".txt", ".json", ".csv"], height = 150)
 
-      with gr.Column():
-          log_remove_dd = gr.Dropdown(choices=saved_logs(), label="File to remove", scale=2)
+        with gr.Column():
+          log_remove = gr.Dropdown(choices=saved_logs(), label="File to remove", scale=2)
           log_remove_btn = gr.Button("Remove file", variant="stop", scale=2)
 
     log_dd = gr.Dropdown(choices=saved_logs(), label="Saved logs (pick one)")
-    upload_box.upload(save_upload, upload_box, [log_dd, log_remove_dd])
-    log_remove_btn.click(remove_file, [log_remove_dd, log_dd], [log_dd, log_remove_dd])
 
 
 # Different Tabs
     with gr.Accordion("Additional Options", open = False):
-      with gr.Tab("Keywords"):
-          kw_table = gr.Dataframe(value=keyword_rows(), headers=["Keyword", "Initial score"],
-                                  interactive=False, label="Current keywords")
-          with gr.Row():
-              new_word = gr.Textbox(label="New keyword or phrase", placeholder="Type in a filter keyword")
-              new_score = gr.Number(label="Initial score", value=1, precision=0, minimum=1)
-          add_button = gr.Button("Add / update keyword", variant="primary")
-          remove_dd = gr.Dropdown(choices=sorted(load_keywords()), label="Keyword to remove")
-          remove_button = gr.Button("Remove keyword")
+        with gr.Tab("Keywords"):
+            kw_table = gr.Dataframe(value=keyword_rows(), headers=["Keyword", "Initial score"],
+                                    interactive=False, label="Current keywords")
+            with gr.Row():
+                new_word = gr.Textbox(label="New keyword or phrase", placeholder="Type in a filter keyword")
+                new_score = gr.Number(label="Initial score", value=1, precision=0, minimum=1)
+            add_button = gr.Button("Add / update keyword", variant="primary")
+            remove_dd = gr.Dropdown(choices=sorted(load_keywords()), label="Keyword to remove")
+            remove_button = gr.Button("Remove keyword")
 
-          add_button.click(ui_add, [new_word, new_score], [kw_table, remove_dd, new_word])
-          remove_button.click(ui_remove, remove_dd, [kw_table, remove_dd])
+            add_button.click(ui_add, [new_word, new_score], [kw_table, remove_dd, new_word])
+            remove_button.click(ui_remove, remove_dd, [kw_table, remove_dd])
 
+        with gr.Tab("Scan"):
+            gr.Markdown("### Scan a chat log for keywords")
+            scan_options = gr.Dropdown(choices=saved_logs(), label="Choose a chat log to scan", value=None)
+            scan_button = gr.Button("Scan for keywords", variant = "primary")
+            scan_output = gr.Textbox(label="Scan results", interactive=False, placeholder="Scan results will appear here")
+
+            #Button Function
+            scan_button.click(finding_keywords, [scan_options], [scan_output])
+
+    upload_box.upload(save_upload, upload_box, [log_dd, log_remove, scan_options])
+    log_remove_btn.click(remove_file, [log_remove, log_dd], [log_dd, log_remove, scan_options])
 
 
 demo.launch(theme=gr.Theme.from_hub("CultriX/gradio-theme"))
