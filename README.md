@@ -5,7 +5,7 @@ Chat Sentinel is an abusive-content scanner for chat logs, built with Python and
 ## Features
 
 - **Upload and manage chat logs** in `.txt`, `.json`, or `.csv` format. Uploaded logs are saved in an `uploaded_logs/` folder, and you can pick or remove them from the page.
-- **Configurable keyword list** stored in `keywords.json`. Add or update a keyword with an initial score, or remove one. Matching ignores upper and lower case, and a set of default keywords is restored every time the app starts.
+- **Configurable keyword list** stored in `keywords.json`. Add or update a keyword with an initial score, or remove one.
 - **Keyword scan** of the selected chat log that reports how many times each keyword appears and its score.
 - **Error handling** for missing files, unreadable files, an empty keyword list, and nothing selected.
 
@@ -26,7 +26,7 @@ Chat Sentinel is an abusive-content scanner for chat logs, built with Python and
 | `.csv` | A header row of `Time,User,Message`, then one message per row |
 | `.txt` | A header line, then one message per line, like `[12:14] user1: message text` |
 
-## Usage
+## Web Interface Explaination
 
 1. Upload a chat log, or pick one you've already uploaded from **Saved logs**.
 2. Open **Additional Options** to add or remove keywords on the **Keywords** tab.
