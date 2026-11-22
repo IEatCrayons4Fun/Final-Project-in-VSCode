@@ -3,7 +3,6 @@ import json
 import os
 import re
 import shutil
-
 import gradio as gr
 
 
@@ -99,7 +98,7 @@ def save_upload(upload):
   if not upload:
     gr.Info("Choose a file to upload first")
     files = saved_logs()
-    return gr.Dropdown(choices=files), gr.Dropdown(choices=files), gr.Dropdown(choices=files)
+    return gr.Dropdown(choices=files), gr.Dropdown(choices=files)
   name = os.path.basename(upload)
   destination = os.path.join(folder, name)
   try:
@@ -112,7 +111,6 @@ def save_upload(upload):
   return (
     gr.Dropdown(choices=files, value=name if name in files else None),
     gr.Dropdown(choices=files),
-    gr.Dropdown(choices=files, value=name if name in files else None),
   )
 
 def remove_file(name, current):
@@ -131,7 +129,6 @@ def remove_file(name, current):
   return (
     gr.Dropdown(choices=files, value=keep),
     gr.Dropdown(choices=files, value=None),
-    gr.Dropdown(choices=files),
   )
 
 
@@ -204,7 +201,7 @@ def finding_keywords(saved_log):
 
   if not matches:
     return f"No keywords found in '{name}'."
-  return f"Results for '{name}':\n" + "\n".join(matches)
+  return f"Keyword scan results for '{name}':\n" + "\n".join(matches) + f"\n\nKeywords found: {len(matches)}"
 
 
 
@@ -215,7 +212,10 @@ def finding_keywords(saved_log):
 
 
 
-
+# refresh dropdown
+def refresh_dropdown():
+    files = saved_logs()
+    return gr.Dropdown(choices=files), gr.Dropdown(choices = files)
 
 
 
@@ -230,8 +230,12 @@ def finding_keywords(saved_log):
 
 # Keyword UI Functions
 def ui_add(word, score):
-    gr.Info(add_keyword(word, score))
-    return keyword_rows(), gr.Dropdown(choices=sorted(load_keywords()), value=None), ""
+    if word in add_keyword(word, score):
+      gr.Info("Updated Score", duration=2.5)
+    else:
+      gr.Info(add_keyword(word, score))
+    
+    return keyword_rows(), gr.Dropdown(choices=sorted(load_keywords()), value=None)
 
 def ui_remove(word):
     gr.Info(remove_keyword(word))
@@ -252,35 +256,36 @@ with gr.Blocks(title="Chat Sentinel") as demo:
           log_remove = gr.Dropdown(choices=saved_logs(), label="File to remove", scale=2)
           log_remove_btn = gr.Button("Remove file", variant="stop", scale=2)
 
-    log_dd = gr.Dropdown(choices=saved_logs(), label="Saved logs (pick one)")
+    log_dropdown = gr.Dropdown(choices=saved_logs(), label="Saved logs (pick one)")
 
 
 # Different Tabs
     with gr.Accordion("Additional Options", open = False):
         with gr.Tab("Keywords"):
-            kw_table = gr.Dataframe(value=keyword_rows(), headers=["Keyword", "Initial score"],
-                                    interactive=False, label="Current keywords")
             with gr.Row():
-                new_word = gr.Textbox(label="New keyword or phrase", placeholder="Type in a filter keyword")
-                new_score = gr.Number(label="Initial score", value=1, precision=0, minimum=1)
-            add_button = gr.Button("Add / update keyword", variant="primary")
-            remove_dd = gr.Dropdown(choices=sorted(load_keywords()), label="Keyword to remove")
-            remove_button = gr.Button("Remove keyword")
+              with gr.Column():
+                keyword_table = gr.Dataframe(value=keyword_rows(), headers=["Keyword", "Initial score"], interactive=False, label="Current keywords")
+              with gr.Column():
+                  new_word = gr.Textbox(label="New keyword or phrase / Update keyword", placeholder="Type in a keyword")
+                  new_score = gr.Number(label="Initial score", value=1, precision=0, minimum=1)
+                  add_button = gr.Button("Add / Update keyword", variant="primary")
+                  remove_dropdown = gr.Dropdown(choices=sorted(load_keywords()), label="Keyword to remove")
+                  remove_button = gr.Button("Remove keyword")
 
-            add_button.click(ui_add, [new_word, new_score], [kw_table, remove_dd, new_word])
-            remove_button.click(ui_remove, remove_dd, [kw_table, remove_dd])
+            add_button.click(ui_add, [new_word, new_score], [keyword_table, remove_dropdown])
+            remove_button.click(ui_remove, remove_dropdown, [keyword_table, remove_dropdown])
 
         with gr.Tab("Scan"):
             gr.Markdown("### Scan a chat log for keywords")
-            scan_options = gr.Dropdown(choices=saved_logs(), label="Choose a chat log to scan", value=None)
             scan_button = gr.Button("Scan for keywords", variant = "primary")
             scan_output = gr.Textbox(label="Scan results", interactive=False, placeholder="Scan results will appear here")
 
             #Button Function
-            scan_button.click(finding_keywords, [scan_options], [scan_output])
+            scan_button.click(finding_keywords, [log_dropdown], [scan_output])
 
-    upload_box.upload(save_upload, upload_box, [log_dd, log_remove, scan_options])
-    log_remove_btn.click(remove_file, [log_remove, log_dd], [log_dd, log_remove, scan_options])
+    upload_box.upload(save_upload, upload_box, [log_dropdown, log_remove])
+    log_remove_btn.click(remove_file, [log_remove, log_dropdown], [log_dropdown, log_remove])
+    demo.load(refresh_dropdown, None, [log_dropdown, log_remove])
 
 
 demo.launch(theme=gr.Theme.from_hub("CultriX/gradio-theme"))
